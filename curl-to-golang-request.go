@@ -1,40 +1,77 @@
 package curl_to_golang_request
 
 import (
+	"github.com/pkg/errors"
 	"log"
 	"regexp"
 	"strings"
-	"github.com/pkg/errors"
+	"time"
 )
 
-type req struct {
-	h []header
-	u string
-}
-
-type header struct {
-	key, value string
-}
-
-var hRegex = regexp.MustCompile(`-H '(.+?): (.+?)'`)
+var hRegex = regexp.MustCompile(`-H '(.+?): (.+?)' `)
 
 func ParseCurlCommand(curlStr string) (*req, error) {
 	spaceParts := strings.Split(curlStr, " ")
 	u := spaceParts[len(spaceParts)-1]
+	hh, err := headersWithQuotes(curlStr)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	if len(hh) == 0 {
+		hh, err = headersNoQuotes(curlStr, u)
+	}
+	return &req{u: replaceQuote(u), h: hh}, nil
+}
+
+func headersWithQuotes(curlStr string) ([]header, error) {
 	pp := hRegex.FindAllStringSubmatch(curlStr, -1)
-	log.Println("pp", pp)
+	log.Println("pp headers", pp)
 	var hh []header
 	for _, p := range pp {
 		log.Println("p: ", p)
 		if len(p) != 3 {
 			return nil, errors.Errorf("not enough parts")
 		}
-		h := header{key: p[1], value: p[2]}
+		h := header{key: replaceQuote(p[1]), value: replaceQuote(p[2])}
 		hh = append(hh, h)
 	}
-	return &req{u: strings.Replace(u, "'", "", -1), h: hh}, nil
+	return hh, nil
 }
 
-/*func makeReq(r req) {
-	r = http.Request{}
-}*/
+func headersNoQuotes(curlStr string, u string) ([]header, error) {
+	delim := " -H "
+	parts := strings.Split(strings.Replace(curlStr, u, "", 1), delim)
+	log.Println("parts in headersNoQuotes:", parts)
+	parts = parts[1:]
+	var hh []header
+	for _, p := range parts {
+		log.Println("part in headersNoQuotes:", p)
+		colonParts := strings.Split(p, ": ")
+		if len(colonParts) != 2 {
+			return nil, errors.Errorf("not enough parts")
+		}
+		h := header{key: colonParts[0], value: strings.TrimSpace(colonParts[1])}
+		log.Println("header in headersNoQuotes", h)
+		hh = append(hh, h)
+	}
+	return hh, nil
+}
+
+func replaceQuote(s string) string {
+	return strings.Replace(s, "'", "", -1)
+}
+
+func LogPrep() {
+	log.SetFlags(log.Llongfile | log.LstdFlags)
+}
+
+func ParseCurlCommandAndMakeReq(curlStr string) error {
+	r, err := ParseCurlCommand(curlStr)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	if err := r.Do(20 * time.Second); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}

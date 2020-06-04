@@ -19,11 +19,16 @@ type header struct {
 	key, value string
 }
 
-func (r *req) Do(timeout time.Duration) error {
+type resp struct {
+	status int
+	body   string
+}
+
+func (r *req) Do(timeout time.Duration) (*resp, error) {
 	client := http.Client{Timeout: timeout}
 	req, err := http.NewRequest("GET", r.u, nil)
 	if err != nil {
-		return errors.Wrap(err, "couldn't create request")
+		return nil, errors.Wrap(err, "couldn't create request")
 	}
 	req.Close = true
 	for _, v := range r.h {
@@ -34,7 +39,7 @@ func (r *req) Do(timeout time.Duration) error {
 	log.Println("requesting", r.u)
 	res, err := client.Do(req)
 	if err != nil {
-		return errors.Wrapf(err, "couldn't make request, timeout: %s", timeout)
+		return nil, errors.Wrapf(err, "couldn't make request, timeout: %s", timeout)
 	}
 	if res.StatusCode > 399 || res.StatusCode < 200 {
 		var bodyText string
@@ -51,18 +56,18 @@ func (r *req) Do(timeout time.Duration) error {
 			bodyTextForErr = string([]rune(bodyText)[:maxBodyTextChars])
 		}
 		err := errors.WithStack(fmt.Errorf("not good status code %+v, bodyTextForErr: %+v", res.StatusCode, bodyTextForErr))
-		return err
+		return nil, err
 	}
 	defer res.Body.Close()
 	b, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return errors.Wrapf(err, "couldn't read body")
+		return nil, errors.Wrapf(err, "couldn't read body")
 	}
 	if len(b) == 0 || string(b) == "" {
 		err := errors.Errorf("empty body in response status code: %+v", res.StatusCode)
-		return err
+		return &resp{status: res.StatusCode}, err
 	}
-	log.Println("body ", string(b))
+	//log.Println("body ", string(b))
 	log.Println("status ", res.StatusCode)
-	return nil
+	return &resp{status: res.StatusCode, body: string(b)}, nil
 }
